@@ -84,3 +84,38 @@ def test_generate_icon_reports_empty_output_separately(gen, capsys):
     assert gen.generate_icon("crane") is None
     out = capsys.readouterr().out
     assert "empty response" in out and "MAX_TOKENS" not in out
+
+
+def test_generate_icon_handles_none_text(gen, capsys):
+    client = gen.genai.Client.return_value
+    client.models.generate_content.return_value = _response(None, "SAFETY")
+    assert gen.generate_icon("crane") is None
+    assert "empty response" in capsys.readouterr().out
+
+
+def test_generate_batch_reports_max_tokens(gen, tmp_path, capsys):
+    client = gen.genai.Client.return_value
+    client.models.generate_content.return_value = _response(
+        '<svg viewBox="0 0 24 24"><path d="M 15 14 H 19', "MAX_TOKENS")
+    assert gen.generate_batch("crane", 2, str(tmp_path)) == []
+    out = capsys.readouterr().out
+    assert "MAX_TOKENS" in out and "Error generating icons" not in out
+
+
+def test_generate_batch_handles_empty_response(gen, tmp_path, capsys):
+    client = gen.genai.Client.return_value
+    resp = _response(None, "SAFETY")
+    resp.candidates = []
+    client.models.generate_content.return_value = resp
+    assert gen.generate_batch("crane", 2, str(tmp_path)) == []
+    out = capsys.readouterr().out
+    assert "empty response" in out and "Error generating icons" not in out
+
+
+def test_generate_batch_warns_when_truncated_after_some_icons(gen, tmp_path, capsys):
+    client = gen.genai.Client.return_value
+    client.models.generate_content.return_value = _response(
+        '<svg viewBox="0 0 24 24"><path d="M0 0"/></svg>\n'
+        '<svg viewBox="0 0 24 24"><path d="M 15 14 H 19', "MAX_TOKENS")
+    assert len(gen.generate_batch("crane", 2, str(tmp_path))) == 1
+    assert "MAX_TOKENS" in capsys.readouterr().out

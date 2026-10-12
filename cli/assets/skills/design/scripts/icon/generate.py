@@ -207,6 +207,30 @@ def _finish_reason(response):
     return str(getattr(reason, "name", reason) or "")
 
 
+def _response_text(response):
+    """Collect the text of a response; '' when it has none (blocked, empty)"""
+    text = getattr(response, 'text', None) or ""
+    if not text:
+        candidates = response.candidates or []
+        content = candidates[0].content if candidates else None
+        for part in (content.parts or []) if content else []:
+            if getattr(part, 'text', None):
+                text += part.text
+    return text
+
+
+def _report_no_svg(response, response_text, what="SVG"):
+    """Say why no SVG came back: truncated, empty, or malformed output"""
+    if "MAX_TOKENS" in _finish_reason(response):
+        print("Error: output hit the token limit (finish_reason MAX_TOKENS) "
+              "before the SVG was complete. Try a simpler prompt or style.")
+    elif not response_text.strip():
+        print("Error: model returned an empty response.")
+    else:
+        print(f"No valid {what} generated. Model response:")
+        print(response_text[:500])
+
+
 def generate_icon(prompt, style=None, category=None, name=None,
                   color=None, size=24, output_path=None, viewbox=24):
     """Generate a single SVG icon using Gemini 3.1 Pro Preview"""
@@ -263,25 +287,12 @@ def generate_icon(prompt, style=None, category=None, name=None,
         )
 
         # Extract SVG from response
-        response_text = response.text if hasattr(response, 'text') else ""
-        if not response_text:
-            candidates = response.candidates or []
-            content = candidates[0].content if candidates else None
-            for part in (content.parts or []) if content else []:
-                if hasattr(part, 'text') and part.text:
-                    response_text += part.text
+        response_text = _response_text(response)
 
         svgs = extract_svgs(response_text)
 
         if not svgs:
-            if "MAX_TOKENS" in _finish_reason(response):
-                print("Error: output hit the token limit (finish_reason MAX_TOKENS) "
-                      "before the SVG was complete. Try a simpler prompt or style.")
-            elif not response_text.strip():
-                print("Error: model returned an empty response.")
-            else:
-                print("No valid SVG generated. Model response:")
-                print(response_text[:500])
+            _report_no_svg(response, response_text)
             return None
 
         svg_code = svgs[0]
@@ -358,17 +369,12 @@ def generate_batch(prompt, count, output_dir, style=None, color=None,
             )
         )
 
-        response_text = response.text if hasattr(response, 'text') else ""
-        if not response_text:
-            for part in response.candidates[0].content.parts:
-                if hasattr(part, 'text') and part.text:
-                    response_text += part.text
+        response_text = _response_text(response)
 
         svgs = extract_svgs(response_text)
 
         if not svgs:
-            print("No valid SVGs generated.")
-            print(response_text[:500])
+            _report_no_svg(response, response_text, "SVGs")
             return []
 
         results = []
@@ -385,6 +391,10 @@ def generate_batch(prompt, count, output_dir, style=None, color=None,
 
             results.append(filepath)
             print(f"  [{i+1}/{len(svgs[:count])}] Saved: {filename}")
+
+        if len(results) < count and "MAX_TOKENS" in _finish_reason(response):
+            print("Warning: output hit the token limit (finish_reason MAX_TOKENS); "
+                  "the last icon was cut off. Try fewer variants or a simpler prompt.")
 
         print(f"\n{'='*60}")
         print(f"  BATCH COMPLETE: {len(results)}/{count} icons generated")
