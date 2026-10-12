@@ -174,16 +174,37 @@ def apply_color(svg_code, color):
     return svg_code
 
 
+# Root <svg ...> opening tag; quoted attribute values may contain ">".
+_SVG_ROOT_TAG = re.compile(r"""<svg\b(?:[^>"']|"[^"]*"|'[^']*')*>""")
+
+
+def _set_root_attr(tag, attr, value):
+    """Set attr on a single opening tag, whatever quote style it uses."""
+    # (?<![\w-]) keeps stroke-width, data-height, etc. untouched.
+    pattern = re.compile(r"""(?<![\w-])""" + attr + r"""\s*=\s*(?:"[^"]*"|'[^']*')""")
+    if pattern.search(tag):
+        return pattern.sub(f'{attr}="{value}"', tag, count=1)
+    return tag.replace('<svg', f'<svg {attr}="{value}"', 1)
+
+
 def apply_viewbox_size(svg_code, size):
-    """Adjust SVG viewBox to target size"""
+    """Set width/height on the root <svg> tag only, leaving the viewBox alone"""
     if size:
-        # Update width/height attributes if present
-        svg_code = re.sub(r'width="[^"]*"', f'width="{size}"', svg_code)
-        svg_code = re.sub(r'height="[^"]*"', f'height="{size}"', svg_code)
-        # Add width/height if not present
-        if 'width=' not in svg_code:
-            svg_code = svg_code.replace('<svg', f'<svg width="{size}" height="{size}"', 1)
+        match = _SVG_ROOT_TAG.search(svg_code)
+        if match:
+            tag = _set_root_attr(match.group(0), 'width', size)
+            tag = _set_root_attr(tag, 'height', size)
+            svg_code = svg_code[:match.start()] + tag + svg_code[match.end():]
     return svg_code
+
+
+def _finish_reason(response):
+    """Return the first candidate's finish reason as a string ('' if unknown)"""
+    try:
+        reason = response.candidates[0].finish_reason
+    except (AttributeError, IndexError, TypeError):
+        return ""
+    return str(getattr(reason, "name", reason) or "")
 
 
 def generate_icon(prompt, style=None, category=None, name=None,
@@ -237,22 +258,30 @@ def generate_icon(prompt, style=None, category=None, name=None,
             contents=full_prompt,
             config=types.GenerateContentConfig(
                 temperature=0.7,
-                max_output_tokens=4096,
+                max_output_tokens=16384,
             )
         )
 
         # Extract SVG from response
         response_text = response.text if hasattr(response, 'text') else ""
         if not response_text:
-            for part in response.candidates[0].content.parts:
+            candidates = response.candidates or []
+            content = candidates[0].content if candidates else None
+            for part in (content.parts or []) if content else []:
                 if hasattr(part, 'text') and part.text:
                     response_text += part.text
 
         svgs = extract_svgs(response_text)
 
         if not svgs:
-            print("No valid SVG generated. Model response:")
-            print(response_text[:500])
+            if "MAX_TOKENS" in _finish_reason(response):
+                print("Error: output hit the token limit (finish_reason MAX_TOKENS) "
+                      "before the SVG was complete. Try a simpler prompt or style.")
+            elif not response_text.strip():
+                print("Error: model returned an empty response.")
+            else:
+                print("No valid SVG generated. Model response:")
+                print(response_text[:500])
             return None
 
         svg_code = svgs[0]
