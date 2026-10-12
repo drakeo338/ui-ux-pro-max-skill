@@ -178,12 +178,17 @@ def apply_color(svg_code, color):
 _SVG_ROOT_TAG = re.compile(r"""<svg\b(?:[^>"']|"[^"]*"|'[^']*')*>""")
 
 
+# One token of an opening tag: name[=value], or a stray quoted string.
+# Quoted values are consumed whole, so text inside them is never a name.
+_TAG_ATTR = re.compile(
+    r"""([^\s=/>"']+)(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>"']+))?|"[^"]*"|'[^']*'""")
+
+
 def _set_root_attr(tag, attr, value):
-    """Set attr on a single opening tag, whatever quote style it uses."""
-    # (?<![\w-]) keeps stroke-width, data-height, etc. untouched.
-    pattern = re.compile(r"""(?<![\w-])""" + attr + r"""\s*=\s*(?:"[^"]*"|'[^']*')""")
-    if pattern.search(tag):
-        return pattern.sub(f'{attr}="{value}"', tag, count=1)
+    """Set attr on a single <svg ...> opening tag, whatever quote style it uses."""
+    for m in _TAG_ATTR.finditer(tag, len('<svg')):
+        if m.group(1) == attr:
+            return tag[:m.start()] + f'{attr}="{value}"' + tag[m.end():]
     return tag.replace('<svg', f'<svg {attr}="{value}"', 1)
 
 

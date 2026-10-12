@@ -3,6 +3,7 @@
 import importlib.util
 import sys
 import types as pytypes
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from unittest import mock
 
@@ -57,6 +58,26 @@ def test_viewbox_size_handles_width_and_height_independently(gen):
     root = out[: out.index(">") + 1]
     assert "width=\"32\"" in root and "height=\"32\"" in root
     assert "width='10'" not in root
+
+
+@pytest.mark.parametrize("src, kept", [
+    ('<svg aria-label="height=\'2\'" viewBox="0 0 24 24"><path/></svg>',
+     {"aria-label": "height='2'"}),
+    ("<svg aria-label='width=\"2\" height=\"3\"' viewBox='0 0 24 24'><path/></svg>",
+     {"aria-label": 'width="2" height="3"'}),
+    ('<svg data-note="a > b width=\'1\'" height="5" viewBox="0 0 24 24"><path/></svg>',
+     {"data-note": "a > b width='1'"}),
+    ("<svg data-note='x>y height=\"2\"' width='7'><rect width='1' height='1'/></svg>",
+     {"data-note": 'x>y height="2"'}),
+])
+def test_viewbox_size_ignores_attribute_text_inside_quoted_values(gen, src, kept):
+    out = gen.apply_viewbox_size(src, 24)
+    root = ET.fromstring(out)
+    assert root.get("width") == "24" and root.get("height") == "24"
+    for name, value in kept.items():
+        assert root.get(name) == value
+    for child in root:
+        assert child.get("width") in (None, "1")
 
 
 def test_generate_icon_uses_large_token_budget(gen, tmp_path):
